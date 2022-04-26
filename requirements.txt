@@ -1,0 +1,2 @@
+splink==3.0.0.dev8
+pyarrow==7.0.0
