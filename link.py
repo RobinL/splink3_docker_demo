@@ -7,7 +7,7 @@ from splink.charts import save_offline_chart
 
 
 pd.options.display.max_rows = 1000
-df = pd.read_parquet("./synthetic_1m.parquet")
+df = pd.read_parquet("./historical_figures_5k.parquet")
 
 
 # Initialise the linker, passing in the input dataset(s)
