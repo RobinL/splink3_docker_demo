@@ -1,25 +1,25 @@
 import pandas as pd
-import numpy as np
+import random
+from splink.comparison_library import exact_match, levenshtein
 
 from splink.duckdb.duckdb_linker import DuckDBLinker
 from splink.charts import save_offline_chart
 
 
 pd.options.display.max_rows = 1000
-df = pd.read_parquet("./historical_figures_5k.parquet")
+df = pd.read_parquet("./synthetic_1m.parquet")
 
 
 # Initialise the linker, passing in the input dataset(s)
-linker = DuckDBLinker(input_tables={"df": df})
+linker = DuckDBLinker(df, connection=":temporary:")
 
 c = linker.profile_columns(
     ["first_name", "postcode_fake", "substr(dob, 1,4)"], top_n=10, bottom_n=5
 )
 
-save_offline_chart(c, "./profile_columns.html", overwrite=True)
+save_offline_chart(c.spec, "./profile_columns.html", overwrite=True)
 
 
-from splink.comparison_library import exact_match, levenshtein
 
 settings = {
     "proportion_of_matches": 1e-5,
@@ -45,18 +45,57 @@ settings = {
 }
 
 linker.initialise_settings(settings)
-linker.train_u_using_random_sampling(target_rows=4e6)
+linker.estimate_u_using_random_sampling(target_rows=4e7)
 
 blocking_rule = "l.first_name = r.first_name and l.surname = r.surname"
-training_session_names = linker.train_m_using_expectation_maximisation(blocking_rule)
+training_session_names = linker.estimate_parameters_using_expectation_maximisation(
+    blocking_rule
+)
 c = training_session_names.match_weights_interactive_history_chart()
 
-blocking_rule = "l.dob = r.dob"
-training_session_dob = linker.train_m_using_expectation_maximisation(blocking_rule)
+blocking_rule = "l.dob = r.dob and l.postcode_fake = r.postcode_fake"
+training_session_dob = linker.estimate_parameters_using_expectation_maximisation(
+    blocking_rule
+)
 c = training_session_dob.match_weights_interactive_history_chart()
 
-c = linker.settings_obj.match_weights_chart()
+c = linker.match_weights_chart()
 
-df_e = linker.predict().as_pandas_dataframe()
+df_predict = linker.predict(threshold_match_probability=0.8)
 
-df_e.to_parquet("./predictions.parquet", index=False)
+sql = f"""
+select count(*) as count
+from {df_predict.physical_name}
+
+"""
+
+print(linker._con.execute(sql).fetch_df())
+
+
+df_predict_pd = df_predict.as_pandas_dataframe()
+df_predict_pd.to_parquet("./predictions.parquet", index=False)
+
+
+df_clusters = linker.cluster_pairwise_predictions_at_threshold(df_predict, 0.1)
+df_clusters.as_pandas_dataframe().to_csv("./clusters.csv", index=False)
+
+
+linker.splink_comparison_viewer(df_predict, "./splink_comparison_viewer.html", True, 2)
+
+
+sql = f"""
+select cluster_id, count(*) as count
+from {df_clusters.physical_name}
+group by cluster_id
+having count(*)> 1
+"""
+
+clusters_two_or_more = linker._con.execute(sql).fetch_df()
+
+
+cluster_ids = random.choices(clusters_two_or_more["cluster_id"].unique(), k=10)
+
+
+linker.cluster_studio(
+    df_predict, df_clusters, cluster_ids, "./splink_cluster_studio.html", True
+)

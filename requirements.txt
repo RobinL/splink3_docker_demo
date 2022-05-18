@@ -1,2 +1,2 @@
-splink==3.0.0.dev8
+splink==3.0.0.dev12
 pyarrow==7.0.0
